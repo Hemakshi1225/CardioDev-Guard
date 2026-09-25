@@ -158,7 +158,7 @@ layer — it doesn't care which analyzer produced a finding.
 - Depends on: `core/models.py` (Sub-Task 1)
 - Output feeds directly into Sub-Task 4 (Explainer) and Sub-Task 5 (Recommender)
 
-**Status:** [ ] pending
+**Status:** [x] done
 
 ---
 
@@ -195,7 +195,7 @@ to keep it dependency-free and fast.
 - Depends on: `core/models.py` (Sub-Task 1)
 - Input comes from aggregator output (Sub-Task 3)
 
-**Status:** [ ] pending
+**Status:** [x] done
 
 ---
 
@@ -230,7 +230,7 @@ simple and hackathon-appropriate.
 - Depends on: `core/models.py` (Sub-Task 1)
 - Input is the explained findings from Sub-Task 4
 
-**Status:** [ ] pending
+**Status:** [x] done
 
 ---
 
@@ -271,7 +271,7 @@ application entry point will call. It accepts a project path and a list of analy
   must not change without coordinating with the team.
 - Teammates register their analyzers as callables: `def my_analyzer(req: AnalysisRequest) -> AnalyzerResult`
 
-**Status:** [ ] pending
+**Status:** [x] done
 
 ---
 
@@ -297,7 +297,7 @@ the same Python version and optional libraries.
 **Relevant Context**
 - Keep dependencies minimal — this is a hackathon project
 
-**Status:** [ ] pending
+**Status:** [x] done
 
 ---
 
@@ -332,7 +332,7 @@ and catch regressions during integration. Each test file is independent.
 - Depends on: all sub-tasks 1–6 complete
 - Use `unittest.mock` or simple lambda/closure stubs for mock analyzers — no extra libraries needed
 
-**Status:** [ ] pending
+**Status:** [x] done
 
 ---
 
