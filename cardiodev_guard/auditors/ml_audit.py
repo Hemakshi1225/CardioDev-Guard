@@ -1,0 +1,65 @@
+"""
+ML Audit Adapter — CardioDev-Guard
+=====================================
+Integration point for the ML team's audit module.
+
+THIS FILE CONTAINS NO AUDIT LOGIC.
+
+The ML team (Tanish) implements the real checks in their own module
+(e.g. core/models.py, core/orchestrator.py) and calls inject_results()
+to push findings into this adapter before the dashboard renders.
+
+Dashboard-side contract (what this file owns):
+  - run(project_path) -> AuditResult   called by scanner.py
+  - inject_results(audit_result)        called by ML team's module
+
+ML-team contract (what they must supply):
+  - A list of Finding objects (see cardiodev_guard/findings.py)
+  - Each Finding must have: id, domain=AuditDomain.ML, severity,
+    title, evidence, explanation, suggested_fix, validation_method
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from cardiodev_guard.findings import AuditDomain, AuditResult
+
+
+# Module-level slot for results injected by the ML team's module.
+_injected: AuditResult | None = None
+
+
+def inject_results(audit_result: AuditResult) -> None:
+    """
+    Called by the ML team's module to push completed audit findings
+    into this adapter before the dashboard scan runs.
+
+    Parameters
+    ----------
+    audit_result : AuditResult
+        A fully populated AuditResult with domain=AuditDomain.ML.
+    """
+    global _injected
+    _injected = audit_result
+
+
+def run(project_path: Path) -> AuditResult:  # noqa: ARG001
+    """
+    Return the ML audit result.
+
+    If the ML team has injected results via inject_results(), those are
+    returned as-is.  Otherwise returns an empty AuditResult so the
+    dashboard renders the ML domain with a 'pending' state.
+
+    Parameters
+    ----------
+    project_path : Path
+        Project root — passed through for interface consistency;
+        not used here (the ML team's module handles path resolution).
+    """
+    if _injected is not None:
+        return _injected
+
+    # No results injected yet — return empty domain result.
+    return AuditResult(domain=AuditDomain.ML)
