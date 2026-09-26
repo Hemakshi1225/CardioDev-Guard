@@ -28,14 +28,6 @@ from collections import defaultdict
 from cardiodev_guard.core_bridge import register_analyzer
 from cardiodev_guard.findings import AuditDomain, AuditResult, Finding, Severity
 
-from analyzers.qa_analyzers import (
-    analyze_missing_values,
-    analyze_duplicates,
-    analyze_class_imbalance,
-    analyze_model_metrics,
-    analyze_leakage,
-)
-
 # Module-level slot for results injected by tests or override callers.
 _injected: AuditResult | None = None
 
@@ -161,9 +153,17 @@ def inject_results(audit_result: AuditResult) -> None:
 def register_qa_analyzers() -> None:
     """Register all QA analyzers with the shared core pipeline.
 
-    Safe to call multiple times — core_bridge.register_analyzer() is
-    idempotent (guards against duplicate entries by identity).
+    The analyzer module is imported lazily here to avoid an import-cycle
+    during Streamlit startup.
     """
+    from analyzers.qa_analyzers import (
+        analyze_missing_values,
+        analyze_duplicates,
+        analyze_class_imbalance,
+        analyze_model_metrics,
+        analyze_leakage,
+    )
+
     register_analyzer(analyze_missing_values)
     register_analyzer(analyze_duplicates)
     register_analyzer(analyze_class_imbalance)
