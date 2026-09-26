@@ -1270,7 +1270,12 @@ def _render_docs() -> None:
 # ---------------------------------------------------------------------------
 # Default target + resolver (UNCHANGED)
 # ---------------------------------------------------------------------------
-_DEFAULT_TARGET: str = str(Path(__file__).resolve().parent)
+_REPO_ROOT: Path = Path(__file__).resolve().parent
+_DEFAULT_TARGET: str = str(
+    _REPO_ROOT / "phase 3"
+    if (_REPO_ROOT / "phase 3").is_dir()
+    else _REPO_ROOT
+)
 
 
 def _resolve_target(raw: str) -> tuple[Path | None, str]:
