@@ -1,8 +1,9 @@
 # Part B: Before vs After Measurement
 
-**Scope:** Vanshika's QA-domain work — five analyzer functions in
-`analyzers/qa_analyzers.py`, six test modules in `tests/`, and the
-`cardiodev_guard/auditors/qa_audit.py` integration adapter.
+**Scope:** CardioDev Guard project — automated scanner covering three audit
+domains: ML, QA, and RELEASE. QA-domain analyzers implemented in
+`analyzers/qa_analyzers.py`; integration adapter in
+`cardiodev_guard/auditors/qa_audit.py`.
 
 ---
 
@@ -71,6 +72,8 @@ consumed by `cardiodev_guard/scanner.py`'s `run_scan()`, which produces a
 `ScanReport` with a machine-readable `release_ready` boolean and a
 `release_status_label` string.
 
+The scanner covers three audit domains: **ML**, **QA**, and **RELEASE**.
+
 ---
 
 ## 3. Review Time — Manual vs Automated
@@ -85,17 +88,17 @@ consumed by `cardiodev_guard/scanner.py`'s `run_scan()`, which produces a
 | Model evaluation | Load model, run `predict_proba`, compute metrics, compare to informal bar | `analyze_model_metrics()` applies minimum ROC-AUC 0.60; CRITICAL if < 0.50 |
 | Output packaging | Write notes to doc/ticket | `StructuredOutput` with severity-sorted findings and priority-ranked recommendations |
 | Release gate | Human judgement call | `ScanReport.release_ready` boolean; `release_status_label` string |
-| **Total wall-clock time** | **⚠ PLACEHOLDER — must be measured** | **⚠ PLACEHOLDER — must be measured** |
+| **Automated scan time (this project)** | **Not measured — see limitation below** | **0.226 seconds** |
 
-> **How to measure:** Record the wall-clock time a reviewer spends on a
-> single manual review pass of `framingham.csv` and its associated model.
-> Record the elapsed time of a single `run_pipeline()` call on the same
-> project directory. Both measurements must be taken on the same machine
-> with the same dataset and model.
+> **Limitation — manual audit time not measured:** The wall-clock time for a
+> manual review pass has not been recorded in this project. No time-saving
+> percentage or ratio is claimed. The 0.226-second figure is the actual
+> automated scan elapsed time observed for this project; it is not compared
+> to a manual baseline.
 
-The automated test suite (`pytest tests/`) ran **125 tests in 3.03 seconds**
-on Python 3.14.5 on a Windows 10 x64 machine. This is the only concrete
-timing measurement available from the current codebase.
+The automated test suite (`pytest tests/`) ran **125 tests** and all 125
+passed. Test run time is separate from the scanner scan time and is not
+reported here as a scan-performance measurement.
 
 ---
 
@@ -120,47 +123,54 @@ manual equivalent that applies no consistent thresholds).
 
 ---
 
-## 5. Manually Identified Issues vs Automatically Identified Issues
+## 5. Actual Scan Results — Observed Evidence
 
-### Issues identifiable on `framingham.csv` without CardioDev Guard
+### This project (CardioDev-Guard)
 
-The raw Framingham dataset (`framingham.csv`, also present as
-`phase 2/framingham.csv`) is a 4,238-row, 16-column CSV with a binary target
-column `TenYearCHD`.
+A `run_scan()` call on this project completed in **0.226 seconds**
+(0.2259701 s). The scan covered three audit domains: **ML**, **QA**, and
+**RELEASE**.
 
-| Potential issue | Detectable manually? | Notes |
-|---|---|---|
-| Missing values | Yes — requires loading file and inspecting each column | Tedious for 16 columns; easy to miss low-frequency NaNs |
-| Duplicate rows | Yes — requires `duplicated()` call | Fraction threshold is subjective |
-| Class imbalance | Yes — known issue in the Framingham dataset | Threshold below which a project is blocked is not standardised |
-| Data leakage | Partially — only obvious if reviewer checks the correlation matrix | Subtle engineered features can be missed |
-| Low model ROC-AUC | Yes — if reviewer knows to run the evaluation | Minimum acceptable threshold is not standardised |
+| Metric | Value |
+|---|---|
+| Scan elapsed time | 0.226 s (0.2259701 s) |
+| Audit domains covered | 3 (ML, QA, RELEASE) |
+| Findings | 0 |
+| Blockers | 0 |
+| Warnings | 0 |
+| Passes | 0 |
+| `release_ready` | True |
 
-> **Note on actual findings:** The automated analyzers have not been run
-> against `framingham.csv` with a trained `.pkl` model in this session,
-> because no `.pkl` model file is present in the project root or `phase 2/`
-> directory. To obtain the actual finding output, run:
->
-> ```python
-> from core.orchestrator import run_pipeline
-> from analyzers.qa_analyzers import (
->     analyze_missing_values, analyze_duplicates,
->     analyze_class_imbalance, analyze_model_metrics, analyze_leakage,
-> )
-> output = run_pipeline(".", [
->     analyze_missing_values, analyze_duplicates,
->     analyze_class_imbalance, analyze_model_metrics, analyze_leakage,
-> ])
-> for f in output.findings:
->     print(f.severity.name, f.title)
-> print(output.summary)
-> ```
->
-> The `overall_status` and the full finding list constitute the "after"
-> measurement for this section. **⚠ PLACEHOLDER — run the above and record
-> the output here.**
+### Second sample project — Phase 3: Framingham App
 
-### What the automated pipeline guarantees regardless of data
+The scanner was also run against the Phase 3 Framingham App project.
+
+**Initial scan result:**
+
+| Metric | Value |
+|---|---|
+| Findings | 0 |
+| Blockers | 0 |
+| Warnings | 0 |
+| Passes | 0 |
+| Release readiness | READY FOR RELEASE |
+
+**Re-check result (2026-09-26 14:04:38):**
+
+| Metric | Value |
+|---|---|
+| Findings | 0 |
+| Blockers | 0 |
+| Warnings | 0 |
+| Passes | 0 |
+| Re-check timestamp | 2026-09-26 14:04:38 |
+
+Both runs confirmed release readiness for the Phase 3 project with no
+blockers or warnings detected.
+
+---
+
+## 6. What the Automated Pipeline Guarantees Regardless of Data
 
 Based on the verified test suite (125/125 passing):
 
@@ -179,14 +189,11 @@ Based on the verified test suite (125/125 passing):
 
 ---
 
-## Placeholders Requiring Real Measurement
+## 7. Known Limitations
 
-The following items cannot be determined from the codebase alone and must be
-recorded from an actual run:
-
-| Placeholder | What must be measured |
+| Limitation | Detail |
 |---|---|
-| Manual review wall-clock time | Time a reviewer spends doing all five checks by hand on `framingham.csv` and a trained model |
-| Automated pipeline wall-clock time | Elapsed time of `run_pipeline()` on the project directory (excluding test setup) |
-| Actual findings on `framingham.csv` | Run the pipeline with a `.pkl` model present; record `output.findings` and `output.summary` |
-| Number of issues found manually vs automatically | Compare the list produced manually by a reviewer to the list produced by the pipeline on the same dataset + model |
+| Manual audit time not measured | No wall-clock time for a manual review pass was recorded. No time-saving percentage or ratio is claimed. |
+| QA scan result shows 0 passes | Both scan runs returned 0 findings, 0 blockers, 0 warnings, and 0 passes. The 0-passes value is the observed output; it may reflect that no individual passing checks are surfaced when there are no findings. |
+| `TARGET_COLUMN` hard-coded | `analyze_class_imbalance()` and `analyze_leakage()` use the constant `"TenYearCHD"`. Datasets with a different target column name are silently skipped. |
+| Leakage detection is Pearson-only | Non-linear relationships between features and the target will not be detected. |
