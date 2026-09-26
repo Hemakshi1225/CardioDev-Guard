@@ -1013,7 +1013,8 @@ def _render_release_banner(report: ScanReport) -> None:
     total = len(report.all_findings)
     if total == 0:
         st.markdown(
-            '<div class="banner-pending">&#9203;&nbsp; Awaiting audit results</div>',
+            '<div class="banner-ready">&#10003;&nbsp; Scan completed'
+            ' &mdash; no issues detected</div>',
             unsafe_allow_html=True,
         )
     elif report.release_ready:

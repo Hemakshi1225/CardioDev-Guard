@@ -184,6 +184,38 @@ def _translate_structured_output(output: StructuredOutput) -> AuditResult:
         },
     )
 
+    # Surface analyzer failures as real dashboard BLOCKER findings.
+    # Previously, an analyzer could fail silently and the dashboard would
+    # incorrectly show 0 findings / PENDING.
+    for analyzer_result in output.analyzer_results:
+        if not analyzer_result.success:
+            audit_result.findings.append(
+                Finding(
+                    id=f"ml.analyzer_failure.{analyzer_result.analyzer_name}",
+                    domain=AuditDomain.ML,
+                    severity=DashSeverity.BLOCKER,
+                    title=f"Analyzer failed: {analyzer_result.analyzer_name}",
+                    evidence=analyzer_result.error_message or "Unknown analyzer error",
+                    explanation=(
+                        "This analyzer could not complete successfully, so "
+                        "its audit results are incomplete."
+                    ),
+                    suggested_fix=(
+                        "Install the missing dependency or fix the analyzer error, "
+                        "then run the scan again."
+                    ),
+                    validation_method=(
+                        "Re-run the scan and confirm the analyzer completes "
+                        "without an error."
+                    ),
+                    category="analyzer_failure",
+                    extra={
+                        "analyzer_name": analyzer_result.analyzer_name,
+                        "error": analyzer_result.error_message,
+                    },
+                )
+            )
+
     for core_finding in output.findings:
         dash_finding = _translate_finding(core_finding)
 
