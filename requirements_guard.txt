@@ -1,0 +1,6 @@
+# CardioDev-Guard — dashboard dependencies
+# Install with: pip install -r requirements_guard.txt
+
+streamlit>=1.32.0
+pandas>=1.5.0
+joblib>=1.2.0
