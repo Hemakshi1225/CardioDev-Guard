@@ -52,6 +52,9 @@ def run_scan(project_path: str | Path) -> ScanReport:
     """
     project_path = Path(project_path).resolve()
 
+    # Ensure QA analyzers are registered before running adapters.
+    qa_audit.register_qa_analyzers()
+
     report = ScanReport(
         scan_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         project_path=str(project_path),
