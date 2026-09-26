@@ -1434,21 +1434,30 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
         with browse_col:
-            if st.button("Browse", key="browse_folder", use_container_width=True):
-                result = subprocess.run(
-                    [
-                        "osascript",
-                        "-e",
-                        'POSIX path of (choose folder with prompt "Select ML Project Folder")',
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0:
-                    selected = result.stdout.strip()
-                    if selected:
-                        st.session_state["target_project_path"] = selected.rstrip("/")
-                        st.rerun()
+            if sys.platform == "darwin":
+                if st.button("Browse", key="browse_folder", use_container_width=True):
+                    try:
+                        result = subprocess.run(
+                            [
+                                "osascript",
+                                "-e",
+                                'POSIX path of (choose folder with prompt "Select ML Project Folder")',
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            selected = result.stdout.strip()
+                            if selected:
+                                st.session_state["target_project_path"] = selected.rstrip("/")
+                                st.rerun()
+                    except OSError:
+                        st.warning(
+                            "Folder browsing is unavailable here. "
+                            "Enter the project path manually."
+                        )
+            else:
+                st.caption("Enter the project folder path manually when running online.")
                 # returncode != 0 means user cancelled — do nothing
 
         target_path_raw: str = st.text_input(
