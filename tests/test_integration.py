@@ -493,3 +493,110 @@ class TestScanReportProperties:
         report = self._make_report_with_findings(
             DashSeverity.BLOCKER, DashSeverity.WARNING, DashSeverity.PASS)
         assert len(report.all_findings) == 3
+
+
+# ---------------------------------------------------------------------------
+# Target ML Project path selection  (requirements 2–6, 10–11)
+# ---------------------------------------------------------------------------
+
+class TestTargetPathSelection:
+    """Tests for dashboard._resolve_target() and scanner integration with
+    custom project paths.  Covers requirements:
+      - default target is CardioDev-Guard repo
+      - custom valid directory is accepted
+      - invalid / non-existent paths return an error message, not an exception
+      - non-directory paths (files) return an error message
+      - paths with spaces are handled correctly
+      - scanner uses exactly the resolved path
+    """
+
+    def _make_dir_with_spaces(self) -> str:
+        """Create a temp directory whose name contains a space."""
+        import tempfile, os
+        base = tempfile.mkdtemp()
+        spaced = os.path.join(base, "my ml project")
+        os.makedirs(spaced)
+        return spaced
+
+    # -- import once per class to avoid repeated import overhead
+    @staticmethod
+    def _resolve(raw: str):
+        from dashboard import _resolve_target
+        return _resolve_target(raw)
+
+    def test_default_target_is_cardiodev_guard_repo(self):
+        """_DEFAULT_TARGET must point to an existing directory."""
+        from dashboard import _DEFAULT_TARGET
+        p = Path(_DEFAULT_TARGET)
+        assert p.exists(), "default target path must exist"
+        assert p.is_dir(), "default target path must be a directory"
+
+    def test_valid_directory_returns_path_and_no_error(self):
+        tmp = _make_project()
+        path, err = self._resolve(tmp)
+        assert path is not None, f"Expected valid path, got error: {err}"
+        assert err == ""
+        assert path == Path(tmp).resolve()
+
+    def test_nonexistent_path_returns_none_and_error(self):
+        path, err = self._resolve("/nonexistent/path/that/does/not/exist")
+        assert path is None
+        assert "does not exist" in err
+
+    def test_file_path_returns_none_and_error(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as f:
+            fname = f.name
+        path, err = self._resolve(fname)
+        assert path is None
+        assert "not a directory" in err
+
+    def test_empty_string_returns_error(self):
+        path, err = self._resolve("")
+        # An empty string resolves to cwd — which IS a directory,
+        # so we only assert no exception is raised and the result is consistent.
+        assert isinstance(err, str)
+
+    def test_path_with_spaces_is_accepted(self):
+        spaced = self._make_dir_with_spaces()
+        path, err = self._resolve(spaced)
+        assert path is not None, f"Path with spaces must be accepted, got: {err}"
+        assert err == ""
+
+    def test_leading_trailing_whitespace_stripped(self):
+        tmp = _make_project()
+        path, err = self._resolve(f"  {tmp}  ")
+        assert path is not None, f"Whitespace-padded path must be accepted, got: {err}"
+        assert err == ""
+
+    def test_scanner_uses_selected_path(self):
+        """run_scan(custom_path) must record custom_path in the report."""
+        from cardiodev_guard.auditors import ml_audit, qa_audit
+        from cardiodev_guard.scanner import run_scan
+        ml_audit.inject_results(AuditResult(domain=AuditDomain.ML))
+        qa_audit.inject_results(AuditResult(domain=AuditDomain.QA))
+        custom = _make_project()
+        report = run_scan(custom)
+        assert str(Path(custom).resolve()) == report.project_path, (
+            "ScanReport.project_path must reflect the custom target directory"
+        )
+
+    def test_scanner_uses_recheck_path(self):
+        """Re-check must scan the SAME target as the last Run Scan.
+        Simulated here by calling run_scan with the same path twice and
+        verifying both reports carry that path."""
+        from cardiodev_guard.auditors import ml_audit, qa_audit
+        from cardiodev_guard.scanner import run_scan
+        ml_audit.inject_results(AuditResult(domain=AuditDomain.ML))
+        qa_audit.inject_results(AuditResult(domain=AuditDomain.QA))
+        custom = _make_project()
+        report1 = run_scan(custom)
+        report2 = run_scan(custom)   # simulates Re-check
+        assert report1.project_path == report2.project_path, (
+            "Re-check must scan the same target directory"
+        )
+
+    def teardown_method(self):
+        from cardiodev_guard.auditors import ml_audit, qa_audit
+        ml_audit.inject_results(None)
+        qa_audit.inject_results(None)

@@ -312,6 +312,26 @@ def _render_domain_tab(result) -> None:
 # Main dashboard
 # ---------------------------------------------------------------------------
 
+# Default target = the CardioDev-Guard repository itself.
+_DEFAULT_TARGET: str = str(Path(__file__).resolve().parent)
+
+
+def _resolve_target(raw: str) -> tuple[Path | None, str]:
+    """Validate *raw* as an existing directory.
+
+    Returns
+    -------
+    (Path, "")           — valid directory
+    (None, error_msg)    — validation failure
+    """
+    p = Path(raw.strip())
+    if not p.exists():
+        return None, f"Path does not exist: `{p}`"
+    if not p.is_dir():
+        return None, f"Path is not a directory: `{p}`"
+    return p.resolve(), ""
+
+
 def main() -> None:
     # ── Header ────────────────────────────────────────────────────────────
     st.markdown("""
@@ -321,16 +341,9 @@ def main() -> None:
 </div>
 """, unsafe_allow_html=True)
 
-    # ── Sidebar: scan target ───────────────────────────────────────────────
+    # ── Sidebar: audit info ────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("### ⚙️ Scan Configuration")
-        default_path = str(Path(__file__).resolve().parent)
-        project_path = st.text_input(
-            "Project path",
-            value=default_path,
-            help="Absolute path to the CardioDev-Guard project root.",
-        )
-        st.markdown("---")
+        st.markdown("### ⚙️ Audit Configuration")
         st.markdown("**Audit domains**")
         st.markdown("🤖 ML Artifact checks  \n🧪 QA / Test checks  \n🚀 Release gate checks")
         st.markdown("---")
@@ -338,6 +351,41 @@ def main() -> None:
             "This dashboard is for developers and CI/CD pipelines.  \n"
             "It does **not** modify any ML model files."
         )
+
+    # ── Target ML Project selection ────────────────────────────────────────
+    st.markdown('<div class="section-title">📁 Target ML Project</div>', unsafe_allow_html=True)
+
+    target_path_raw: str = st.text_input(
+        "Local ML project folder path",
+        value=st.session_state.get("target_project_path", _DEFAULT_TARGET),
+        key="target_project_path",
+        placeholder="/Users/you/my-ml-project",
+        help=(
+            "Absolute path to any local ML project directory. "
+            "Defaults to the CardioDev-Guard repository for the built-in demo."
+        ),
+    )
+
+    # Resolve and display target info beneath the input
+    target_path, path_error = _resolve_target(target_path_raw)
+    if target_path is not None:
+        project_name = target_path.name or str(target_path)
+        st.markdown(
+            f'<div style="font-size:.83rem;color:#475569;padding:.4rem .2rem;">'
+            f'<b>Target project:</b> {project_name} &nbsp;·&nbsp; '
+            f'<b>Path:</b> <code>{target_path}</code>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="font-size:.83rem;color:#b91c1c;padding:.4rem .2rem;">'
+            f'⚠️ {path_error}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
     # ── Workflow step indicator ────────────────────────────────────────────
     col_steps = st.columns(4)
@@ -379,9 +427,10 @@ def main() -> None:
 
     # ── Execute scan ───────────────────────────────────────────────────────
     if run_button or recheck_button:
-        target = Path(project_path)
-        if not target.exists():
-            st.error(f"Path does not exist: `{project_path}`")
+        # Re-resolve at click time so the user's latest input is used.
+        target, err = _resolve_target(st.session_state.get("target_project_path", _DEFAULT_TARGET))
+        if target is None:
+            st.error(err)
             return
 
         label = "Re-checking project..." if recheck_button else "Scanning project..."
@@ -399,12 +448,14 @@ def main() -> None:
         report: ScanReport = st.session_state["last_report"]
         scan_count = st.session_state.get("scan_count", 1)
 
-        # Scan metadata
+        # Scan metadata — show project name + path prominently
+        scanned_name = Path(report.project_path).name or report.project_path
         st.markdown(
             f'<div style="font-size:.82rem;color:#64748b;margin-bottom:.6rem;">'
+            f'📦 <b>Target project:</b> {scanned_name} &nbsp;·&nbsp; '
+            f'<code>{report.project_path}</code><br>'
             f'📅 Last scanned: <b>{report.scan_timestamp}</b> &nbsp;·&nbsp; '
-            f'Scan #{scan_count} &nbsp;·&nbsp; '
-            f'Path: <code>{report.project_path}</code>'
+            f'Scan #{scan_count}'
             f'</div>',
             unsafe_allow_html=True,
         )

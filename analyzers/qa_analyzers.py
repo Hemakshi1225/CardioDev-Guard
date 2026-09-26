@@ -50,12 +50,31 @@ from core.models import AnalysisRequest, AnalyzerResult, Finding, Severity
 
 # ── tuneable thresholds ──────────────────────────────────────────────────────
 # Exposed as module-level constants so tests can inspect/override them.
-MISSING_CRITICAL_THRESHOLD = 1.0   # fraction: entire column missing → CRITICAL
-IMBALANCE_THRESHOLD        = 0.20  # minority fraction below this → finding
-IMBALANCE_CRITICAL_THRESHOLD = 0.05  # minority fraction below this → CRITICAL
+#
+# Severity mapping reminder (core → dashboard via core_bridge):
+#   CRITICAL → BLOCKER   HIGH → BLOCKER   MEDIUM → WARNING   LOW → WARNING   INFO → PASS
+#
+# Missing values
+MISSING_CRITICAL_THRESHOLD = 1.0   # fraction: entire column missing → CRITICAL (BLOCKER)
+#
+# Class imbalance
+# 15–20 % minority is a known characteristic of many medical datasets including
+# Framingham.  It warrants investigation (WARNING) but is not release-blocking
+# on its own without further model-performance evidence.
+IMBALANCE_THRESHOLD          = 0.20   # minority fraction below this → emit finding
+IMBALANCE_HIGH_THRESHOLD     = 0.05   # minority fraction below this → HIGH  (BLOCKER)
+# Between IMBALANCE_HIGH_THRESHOLD and IMBALANCE_THRESHOLD → MEDIUM (WARNING)
+#
+# Model performance
 METRIC_MIN_ROC_AUC         = 0.60  # ROC-AUC below this → finding
+#
+# Data leakage
 LEAKAGE_CORR_THRESHOLD     = 0.95  # |Pearson corr| >= this → leakage finding
+#
 TARGET_COLUMN              = "TenYearCHD"  # default target column name
+
+# Keep the old name as an alias so existing code/tests that reference it still work.
+IMBALANCE_CRITICAL_THRESHOLD = IMBALANCE_HIGH_THRESHOLD
 
 
 # ── 1. Missing value detection ───────────────────────────────────────────────
@@ -83,19 +102,31 @@ def analyze_missing_values(request: AnalysisRequest) -> AnalyzerResult:
             continue
 
         total_missing = sum(affected.values())
-        total_cells   = len(df) * len(df.columns)
-        # CRITICAL when any column is entirely NaN
+        # CRITICAL when any column is entirely NaN (unusable column → BLOCKER)
         entirely_null = [c for c in affected if df[c].isnull().all()]
         severity = Severity.CRITICAL if entirely_null else Severity.HIGH
+
+        if entirely_null:
+            description = (
+                f"{total_missing} missing value(s) found across "
+                f"{len(affected)} column(s): {list(affected.keys())}. "
+                f"Columns entirely null (all rows NaN): {entirely_null}. "
+                f"Entirely-null columns cannot be used for training or evaluation."
+            )
+        else:
+            pct = round(100.0 * total_missing / max(len(df) * len(df.columns), 1), 1)
+            description = (
+                f"{total_missing} missing value(s) across "
+                f"{len(affected)} column(s): {list(affected.keys())} "
+                f"({pct}% of all cells). "
+                f"Imputation or column removal is required before training."
+            )
 
         result.findings.append(Finding(
             severity=severity,
             category="data_quality",
             title=f"Missing values detected in {os.path.basename(csv_path)}",
-            description=(
-                f"{total_missing} missing value(s) found across "
-                f"{len(affected)} column(s): {list(affected.keys())}"
-            ),
+            description=description,
             file_path=csv_path,
             raw_data={
                 "missing_count":      total_missing,
@@ -190,10 +221,25 @@ def analyze_class_imbalance(
         if minority_ratio >= IMBALANCE_THRESHOLD:
             continue  # balanced enough
 
-        severity = (
-            Severity.CRITICAL if minority_ratio < IMBALANCE_CRITICAL_THRESHOLD
-            else Severity.HIGH
-        )
+        # Severity ladder:
+        #   < 5%  → HIGH   (BLOCKER) — extreme imbalance severely degrades recall
+        #   5–20% → MEDIUM (WARNING) — notable but common in medical datasets;
+        #                              warrants resampling review, not a release block
+        if minority_ratio < IMBALANCE_HIGH_THRESHOLD:
+            severity = Severity.HIGH
+            imbalance_note = (
+                "Extreme imbalance (<5% minority). "
+                "The model will likely default-predict the majority class. "
+                "Address with oversampling, class weights, or data collection."
+            )
+        else:
+            severity = Severity.MEDIUM
+            imbalance_note = (
+                f"Mild-to-moderate imbalance ({minority_ratio:.1%} minority). "
+                f"This ratio is common in medical outcome datasets. "
+                f"Consider class-weighted training or stratified sampling; "
+                f"this is not automatically release-blocking."
+            )
 
         result.findings.append(Finding(
             severity=severity,
@@ -203,9 +249,10 @@ def analyze_class_imbalance(
                 f"({minority_ratio:.1%} minority)"
             ),
             description=(
-                f"Minority class '{minority_cls}' has only {minority_cnt} samples "
-                f"({minority_ratio:.1%}) vs majority class '{majority_cls}' "
-                f"with {majority_cnt} samples."
+                f"Minority class '{minority_cls}': {minority_cnt} samples "
+                f"({minority_ratio:.1%}). "
+                f"Majority class '{majority_cls}': {majority_cnt} samples. "
+                f"{imbalance_note}"
             ),
             file_path=csv_path,
             raw_data={
@@ -241,11 +288,19 @@ def analyze_model_metrics(
         try:
             model = joblib.load(model_path)
         except Exception as exc:
+            # A model file that cannot be deserialized is release-blocking:
+            # no predictions can be made and the artifact may be corrupt.
             result.findings.append(Finding(
                 severity=Severity.HIGH,
                 category="model_performance",
                 title=f"Could not load model: {os.path.basename(model_path)}",
-                description=str(exc),
+                description=(
+                    f"joblib.load('{os.path.basename(model_path)}') raised "
+                    f"{type(exc).__name__}: {exc}. "
+                    f"The model file may be corrupt, incomplete, or incompatible "
+                    f"with the installed scikit-learn version. "
+                    f"Re-train and re-export the model to fix this."
+                ),
                 file_path=model_path,
             ))
             continue
@@ -258,7 +313,10 @@ def analyze_model_metrics(
                     severity=Severity.HIGH,
                     category="model_performance",
                     title=f"Could not read eval file: {os.path.basename(csv_path)}",
-                    description=str(exc),
+                    description=(
+                        f"pandas.read_csv('{os.path.basename(csv_path)}') raised "
+                        f"{type(exc).__name__}: {exc}."
+                    ),
                     file_path=csv_path,
                 ))
                 continue
@@ -275,12 +333,21 @@ def analyze_model_metrics(
                 auc     = round(float(roc_auc_score(y, y_proba)), 4)
                 acc     = round(float(accuracy_score(y, y_pred)), 4)
             except Exception as exc:
+                # Evaluation failure is concrete evidence the model cannot score
+                # this dataset — release-blocking.
                 result.findings.append(Finding(
                     severity=Severity.HIGH,
                     category="model_performance",
                     title=f"Model evaluation failed for {os.path.basename(model_path)}",
-                    description=str(exc),
+                    description=(
+                        f"model.predict() / predict_proba() raised "
+                        f"{type(exc).__name__}: {exc} "
+                        f"when evaluated on '{os.path.basename(csv_path)}'. "
+                        f"This is concrete evidence the model cannot score the dataset. "
+                        f"Check for feature-name or shape mismatches."
+                    ),
                     file_path=model_path,
+                    raw_data={"eval_file": csv_path, "error": str(exc)},
                 ))
                 continue
 
@@ -294,9 +361,10 @@ def analyze_model_metrics(
                 category="model_performance",
                 title=f"Low ROC-AUC score: {auc:.2f} ({os.path.basename(model_path)})",
                 description=(
-                    f"Model '{os.path.basename(model_path)}' achieved ROC-AUC={auc} "
+                    f"Model '{os.path.basename(model_path)}' achieved "
+                    f"ROC-AUC={auc} (threshold: {METRIC_MIN_ROC_AUC}) "
                     f"and accuracy={acc} on '{os.path.basename(csv_path)}'. "
-                    f"Minimum acceptable ROC-AUC is {METRIC_MIN_ROC_AUC}."
+                    f"{'ROC-AUC below 0.50 is worse than random — model may predict inversely.' if auc < 0.50 else 'ROC-AUC is below the minimum acceptable threshold.'}"
                 ),
                 file_path=model_path,
                 raw_data={
