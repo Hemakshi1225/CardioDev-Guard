@@ -15,6 +15,9 @@ from datetime import datetime
 
 import subprocess
 import sys
+import shutil
+import tempfile
+import zipfile
 
 import streamlit as st
 
@@ -1268,7 +1271,7 @@ def _render_docs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Default target + resolver (UNCHANGED)
+# Project target helpers
 # ---------------------------------------------------------------------------
 _REPO_ROOT: Path = Path(__file__).resolve().parent
 _DEFAULT_TARGET: str = str(
@@ -1285,6 +1288,60 @@ def _resolve_target(raw: str) -> tuple[Path | None, str]:
     if not p.is_dir():
         return None, f"Path is not a directory: `{p}`"
     return p.resolve(), ""
+
+
+def _extract_uploaded_project(zip_bytes: bytes, filename: str) -> tuple[Path | None, str]:
+    """Safely extract an uploaded ML project ZIP into a temporary directory."""
+    if not filename.lower().endswith(".zip"):
+        return None, "Please upload a .zip ML project."
+
+    temp_root = Path(tempfile.mkdtemp(prefix="cardiodev_guard_"))
+
+    try:
+        zip_path = temp_root / "project.zip"
+        zip_path.write_bytes(zip_bytes)
+
+        with zipfile.ZipFile(zip_path) as zf:
+            members = [m for m in zf.infolist() if not m.filename.startswith("__MACOSX/")]
+            if not members:
+                raise ValueError("The ZIP is empty.")
+
+            # Prevent ZIP path traversal (e.g. ../../some_file).
+            for member in members:
+                member_path = Path(member.filename)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise ValueError("Invalid ZIP: unsafe file path detected.")
+
+            zf.extractall(temp_root / "project")
+
+        project_dir = temp_root / "project"
+        children = [p for p in project_dir.iterdir() if p.name != "__MACOSX"]
+        directories = [p for p in children if p.is_dir()]
+        files = [p for p in children if p.is_file()]
+
+        # Handle both: project.zip/files... and project.zip/project/files...
+        if len(directories) == 1 and not files:
+            project_root = directories[0]
+        else:
+            project_root = project_dir
+
+        # The ZIP itself is no longer needed after extraction.
+        zip_path.unlink(missing_ok=True)
+        return project_root.resolve(), ""
+
+    except zipfile.BadZipFile:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        return None, "The uploaded file is not a valid ZIP."
+    except Exception as exc:
+        shutil.rmtree(temp_root, ignore_errors=True)
+        return None, f"Could not extract project: {exc}"
+
+
+def _cleanup_uploaded_project() -> None:
+    """Remove the previous temporary uploaded-project directory."""
+    old_root = st.session_state.pop("uploaded_project_temp", None)
+    if old_root:
+        shutil.rmtree(old_root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1426,66 +1483,96 @@ def main() -> None:
     col_target, col_flow = st.columns([3, 1], gap="medium")
 
     with col_target:
-        # Compact header row: label on the left, Browse button on the right
-        hdr_col, browse_col = st.columns([5, 1])
-        with hdr_col:
-            st.markdown(
-                f'<div class="target-label" style="padding-top:.35rem;">TARGET PROJECT</div>',
-                unsafe_allow_html=True,
-            )
-        with browse_col:
-            if sys.platform == "darwin":
-                if st.button("Browse", key="browse_folder", use_container_width=True):
-                    try:
-                        result = subprocess.run(
-                            [
-                                "osascript",
-                                "-e",
-                                'POSIX path of (choose folder with prompt "Select ML Project Folder")',
-                            ],
-                            capture_output=True,
-                            text=True,
-                        )
-                        if result.returncode == 0:
-                            selected = result.stdout.strip()
-                            if selected:
-                                st.session_state["target_project_path"] = selected.rstrip("/")
-                                st.rerun()
-                    except OSError:
-                        st.warning(
-                            "Folder browsing is unavailable here. "
-                            "Enter the project path manually."
-                        )
-            else:
-                st.caption("Enter the project folder path manually when running online.")
-                # returncode != 0 means user cancelled — do nothing
-
-        target_path_raw: str = st.text_input(
-            "Local ML project folder path",
-            value=st.session_state.get("target_project_path", _DEFAULT_TARGET),
-            key="target_project_path",
-            placeholder="/Users/you/my-ml-project",
-            label_visibility="collapsed",
-            help=(
-                "Absolute path to any local ML project directory. "
-                "Defaults to the CardioDev-Guard repository for the built-in demo."
-            ),
-        )
-
-        target_path, path_error = _resolve_target(target_path_raw)
-        if target_path is not None:
-            pass  # valid path — no extra display needed; hint below is sufficient
-        else:
-            st.markdown(
-                f'<div class="target-error">&#9888; {path_error}</div>',
-                unsafe_allow_html=True,
-            )
-
         st.markdown(
-            '<div class="target-hint">Supports any local ML project '
-            '(.py &middot; .ipynb &middot; .csv &middot; .pkl &middot; .parquet)</div>',
+            f'<div class="target-label" style="padding-top:.35rem;">TARGET PROJECT</div>',
             unsafe_allow_html=True,
         )
+
+        input_mode = st.radio(
+            "Project source",
+            ["Upload ZIP", "Local Folder"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="project_input_mode",
+        )
+
+        target_path = None
+        path_error = ""
+
+        if input_mode == "Upload ZIP":
+            uploaded_project = st.file_uploader(
+                "Upload ML project ZIP",
+                type=["zip"],
+                key="uploaded_project",
+                help="ZIP your ML project folder and upload it here. The project is scanned in a temporary folder and is not executed.",
+            )
+
+            if uploaded_project is not None:
+                st.session_state["uploaded_project_bytes"] = uploaded_project.getvalue()
+                st.session_state["uploaded_project_name"] = uploaded_project.name
+
+            if st.session_state.get("uploaded_project_bytes"):
+                upload_name = st.session_state.get("uploaded_project_name", "project.zip")
+                st.markdown(
+                    f'<div class="target-active"><b>Uploaded:</b> <code>{upload_name}</code></div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    '<div class="target-hint">Upload an updated ZIP again before Re-check after fixing your project locally.</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div class="target-hint">Cloud users can upload any ML project as a ZIP. '
+                    'Works with .py, .ipynb, .csv, .pkl and .parquet projects.</div>',
+                    unsafe_allow_html=True,
+                )
+
+        else:
+            hdr_col, browse_col = st.columns([5, 1])
+            with hdr_col:
+                st.caption("Local folder mode — works when running CardioDev-Guard on your own machine.")
+            with browse_col:
+                if sys.platform == "darwin":
+                    if st.button("Browse", key="browse_folder", use_container_width=True):
+                        try:
+                            result = subprocess.run(
+                                [
+                                    "osascript",
+                                    "-e",
+                                    'POSIX path of (choose folder with prompt "Select ML Project Folder")',
+                                ],
+                                capture_output=True,
+                                text=True,
+                            )
+                            if result.returncode == 0:
+                                selected = result.stdout.strip()
+                                if selected:
+                                    st.session_state["target_project_path"] = selected.rstrip("/")
+                                    st.rerun()
+                        except OSError:
+                            st.warning(
+                                "Folder browsing is unavailable here. "
+                                "Enter the project path manually."
+                            )
+                else:
+                    st.caption("Browse is available locally on macOS; online users should use Upload ZIP.")
+
+            target_path_raw: str = st.text_input(
+                "Local ML project folder path",
+                value=st.session_state.get("target_project_path", _DEFAULT_TARGET),
+                key="target_project_path",
+                placeholder="/Users/you/my-ml-project",
+                label_visibility="collapsed",
+                help="Absolute path to any local ML project directory.",
+            )
+
+            target_path, path_error = _resolve_target(target_path_raw)
+            if target_path is None:
+                st.markdown(
+                    f'<div class="target-error">&#9888; {path_error}</div>',
+                    unsafe_allow_html=True,
+                )
 
         st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
@@ -1502,7 +1589,7 @@ def main() -> None:
                 type="secondary",
                 use_container_width=True,
                 disabled=not scan_done,
-                help="Re-run the scan to verify fixes. Enabled after the first scan.",
+                help="Re-run the scan to verify fixes. For an uploaded project, upload the updated ZIP first.",
             )
 
     with col_flow:
@@ -1510,16 +1597,39 @@ def main() -> None:
 
     # ── Execute scan ───────────────────────────────────────────────────────
     if run_button or recheck_button:
-        target, err = _resolve_target(
-            st.session_state.get("target_project_path", _DEFAULT_TARGET)
-        )
+        target = None
+        err = ""
+        temp_target = None
+
+        if input_mode == "Upload ZIP":
+            zip_bytes = st.session_state.get("uploaded_project_bytes")
+            zip_name = st.session_state.get("uploaded_project_name", "project.zip")
+            if not zip_bytes:
+                err = "Upload an ML project ZIP before running the scan."
+            else:
+                # Clean the previous extracted copy before creating a new one.
+                _cleanup_uploaded_project()
+                target, err = _extract_uploaded_project(zip_bytes, zip_name)
+                temp_target = target
+                if target is not None:
+                    st.session_state["uploaded_project_temp"] = str(target.parent.parent)
+        else:
+            target, err = _resolve_target(
+                st.session_state.get("target_project_path", _DEFAULT_TARGET)
+            )
+
         if target is None:
             st.error(err)
             return
 
         label = "Re-checking project..." if recheck_button else "Scanning project..."
-        with st.spinner(label):
-            report = run_scan(target)
+        try:
+            with st.spinner(label):
+                report = run_scan(target)
+        finally:
+            # Keep the extracted ZIP during the Streamlit session so Re-check/report
+            # can still reference the scan result; the next scan cleans it up.
+            pass
 
         st.session_state["last_report"] = report
         st.session_state["scan_count"] = st.session_state.get("scan_count", 0) + 1
