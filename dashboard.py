@@ -18,6 +18,20 @@ import streamlit as st
 from cardiodev_guard.scanner import run_scan
 from cardiodev_guard.report import to_json, to_markdown
 from cardiodev_guard.findings import Severity, AuditDomain, ScanReport
+from cardiodev_guard.auditors.qa_audit import register_qa_analyzers
+
+# ---------------------------------------------------------------------------
+# One-time QA analyzer registration
+# Streamlit re-executes the script on every interaction, but the module is
+# only imported once per worker process.  The module-level flag ensures
+# register_qa_analyzers() is called exactly once, regardless of reruns.
+# core_bridge.register_analyzer() also guards against duplicate entries, so
+# this is doubly safe.
+# ---------------------------------------------------------------------------
+_QA_ANALYZERS_REGISTERED: bool = False
+if not _QA_ANALYZERS_REGISTERED:
+    register_qa_analyzers()
+    _QA_ANALYZERS_REGISTERED = True
 
 # ---------------------------------------------------------------------------
 # Page config

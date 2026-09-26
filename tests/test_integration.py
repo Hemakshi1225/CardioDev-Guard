@@ -339,12 +339,14 @@ class TestMlAuditAdapter:
 
 class TestScannerIntegration:
     def setup_method(self):
-        from cardiodev_guard.auditors import ml_audit
+        from cardiodev_guard.auditors import ml_audit, qa_audit
         ml_audit.inject_results(None)
+        qa_audit.inject_results(None)
 
     def teardown_method(self):
-        from cardiodev_guard.auditors import ml_audit
+        from cardiodev_guard.auditors import ml_audit, qa_audit
         ml_audit.inject_results(None)
+        qa_audit.inject_results(None)
 
     def test_run_scan_returns_scan_report(self):
         from cardiodev_guard.scanner import run_scan
@@ -367,16 +369,33 @@ class TestScannerIntegration:
         assert AuditDomain.QA in domains
         assert AuditDomain.RELEASE in domains
 
-    def test_qa_and_release_domains_are_pending_empty(self):
-        """Vanshika's QA/release modules are not available; domains must be empty."""
+    def test_qa_domain_is_present_and_does_not_crash(self):
+        """QA module is now integrated; the QA domain must be present with no
+        adapter_error finding (meaning qa_audit.run() exists and is callable)."""
+        from cardiodev_guard.auditors import qa_audit
+        from cardiodev_guard.scanner import run_scan
+        qa_audit.inject_results(AuditResult(domain=AuditDomain.QA))
+        tmp = _make_project()
+        report = run_scan(tmp)
+        qa_results = [r for r in report.audit_results if r.domain == AuditDomain.QA]
+        assert len(qa_results) == 1, "QA domain must appear exactly once"
+        adapter_errors = [
+            f for f in qa_results[0].findings
+            if "adapter raised an unexpected error" in f.title
+        ]
+        assert adapter_errors == [], (
+            f"QA adapter must not crash, got: {adapter_errors}"
+        )
+
+    def test_release_domain_is_pending_empty(self):
+        """Release team has not yet integrated; RELEASE domain must be empty."""
         from cardiodev_guard.scanner import run_scan
         tmp = _make_project()
         report = run_scan(tmp)
         for r in report.audit_results:
-            if r.domain in (AuditDomain.QA, AuditDomain.RELEASE):
+            if r.domain == AuditDomain.RELEASE:
                 assert r.findings == [], (
-                    f"{r.domain.value} domain should be empty (pending), "
-                    f"got {r.findings}"
+                    f"RELEASE domain should be empty (pending), got {r.findings}"
                 )
 
     def test_scan_timestamp_is_set(self):
@@ -392,11 +411,12 @@ class TestScannerIntegration:
         assert str(Path(tmp).resolve()) == report.project_path
 
     def test_release_ready_true_when_no_blockers(self):
-        """With no registered core analyzers, ML returns no findings → READY."""
-        from cardiodev_guard.auditors import ml_audit
+        """With no registered core analyzers and empty QA/ML results → READY."""
+        from cardiodev_guard.auditors import ml_audit, qa_audit
         from cardiodev_guard.scanner import run_scan
-        # Inject empty result so QA/RELEASE pending empties don't affect this
+        # Inject empty results so neither ML nor QA produce blockers.
         ml_audit.inject_results(AuditResult(domain=AuditDomain.ML))
+        qa_audit.inject_results(AuditResult(domain=AuditDomain.QA))
         tmp = _make_project()
         report = run_scan(tmp)
         assert report.release_ready is True
@@ -420,7 +440,7 @@ class TestScannerIntegration:
         assert "NOT READY" in report.release_status_label
 
     def test_warning_only_is_release_ready(self):
-        from cardiodev_guard.auditors import ml_audit
+        from cardiodev_guard.auditors import ml_audit, qa_audit
         from cardiodev_guard.scanner import run_scan
         result_with_warning = AuditResult(domain=AuditDomain.ML)
         result_with_warning.findings.append(Finding(
@@ -431,6 +451,8 @@ class TestScannerIntegration:
             validation_method="re-scan",
         ))
         ml_audit.inject_results(result_with_warning)
+        # Inject empty QA result so live QA analysis does not introduce blockers.
+        qa_audit.inject_results(AuditResult(domain=AuditDomain.QA))
         tmp = _make_project()
         report = run_scan(tmp)
         assert report.release_ready is True
