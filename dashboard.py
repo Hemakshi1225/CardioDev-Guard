@@ -1037,8 +1037,8 @@ def _render_domain_tab(result) -> None:
     if not result.findings:
         st.markdown(
             f'<div class="domain-header">{icon} {result.domain.value} Audit'
-            f'<span style="color:var(--muted2,#555C68);font-size:.71rem;font-weight:400;">'
-            f' &mdash; awaiting results</span></div>',
+            f'<span style="color:var(--pass_text,#5BB880);font-size:.71rem;font-weight:600;">'
+            f' &mdash; no issues detected</span></div>',
             unsafe_allow_html=True,
         )
         st.markdown(
@@ -1766,9 +1766,7 @@ def main() -> None:
 
     with left_col:
         total_f = len(report.all_findings)
-        if total_f == 0:
-            v_cls, v_txt = "pending", "PENDING"
-        elif report.release_ready:
+        if report.release_ready:
             v_cls, v_txt = "ready", "READY"
         else:
             v_cls, v_txt = "blocked", "NOT READY"
